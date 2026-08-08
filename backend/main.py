@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from time import perf_counter
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from . import storage
 from .agent import run_agent
+from .batch import MAX_CONCURRENCY, summarize_files
 from .mcp_service import discover_tools
 from .models import BatchRequest, ChatRequest, McpServerInput, NewSession
 from .workspace import list_files, read_file, search_code
@@ -91,16 +93,21 @@ async def chat(payload: ChatRequest):
 
 
 @app.post("/batch/summarize")
-async def batch_summarize(payload: BatchRequest) -> list[dict]:
-    """Small real-file batch feature required by the workshop."""
-    results = []
-    for path in payload.paths:
-        try:
-            content = read_file(payload.workspace_path, path, 1, 160)["content"]
-            results.append({"path": path, "preview": content[:1000]})
-        except ValueError as exc:
-            results.append({"path": path, "error": str(exc)})
-    return results
+async def batch_summarize(payload: BatchRequest) -> dict:
+    """Summarise several files in one batched round of concurrent model calls.
+
+    `total_seconds` is wall-clock for the whole batch while each result carries
+    its own duration, so the saving over a sequential run is visible in the
+    response itself.
+    """
+    started = perf_counter()
+    results = await summarize_files(payload.provider, payload.workspace_path, payload.paths)
+    return {
+        "total_seconds": round(perf_counter() - started, 2),
+        "sequential_seconds": round(sum(item["seconds"] for item in results), 2),
+        "concurrency": MAX_CONCURRENCY,
+        "results": results,
+    }
 
 
 @app.get("/mcp/servers")

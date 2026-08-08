@@ -22,7 +22,8 @@ TOOLS = [
 ]
 
 
-def _client(config: ProviderConfig):
+def create_client(config: ProviderConfig):
+    """Build an async OpenAI-family client. Not used by the Gemini path, which is REST."""
     if config.kind == "azure":
         if not config.base_url:
             raise ValueError("Azure OpenAI needs an endpoint")
@@ -131,7 +132,7 @@ async def run_agent(config: ProviderConfig, workspace_path: str, history: list[d
             yield event
         return
 
-    client = _client(config)
+    client = create_client(config)
     messages: list[dict[str, Any]] = build_openai_messages(history, user_message)
 
     for _ in range(6):

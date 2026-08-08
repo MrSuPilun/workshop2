@@ -23,8 +23,8 @@ st.title("🧭 SyncSpace")
 st.caption("Your AI Workspace Companion")
 
 
-def api(method: str, path: str, **kwargs):
-    response = httpx.request(method, f"{API_URL}{path}", timeout=30, **kwargs)
+def api(method: str, path: str, timeout: float = 30, **kwargs):
+    response = httpx.request(method, f"{API_URL}{path}", timeout=timeout, **kwargs)
     response.raise_for_status()
     return response.json()
 
@@ -79,6 +79,47 @@ with st.sidebar:
                 st.error(str(exc))
 
 
+provider = {"kind": kind, "api_key": api_key, "model": model, "base_url": base_url, "api_version": api_version}
+provider_ready = bool(api_key and model) and not (kind in {"azure", "compatible"} and not base_url)
+
+
+with st.expander("📦 Batch summarize files", expanded=bool(st.session_state.get("batch"))):
+    st.caption("Every selected file is summarized in its own model call; the calls run concurrently.")
+    try:
+        available_files = api("GET", "/workspace/files", params={"path": workspace})
+    except Exception as exc:
+        available_files = []
+        st.warning(f"Could not list the workspace: {exc}")
+    chosen = st.multiselect("Files", available_files, max_selections=20, key="batch_paths")
+    if st.button("Summarize selected", disabled=not chosen):
+        if not provider_ready:
+            st.error("Please complete the provider configuration first.")
+        else:
+            with st.spinner(f"Summarizing {len(chosen)} file(s)…"):
+                try:
+                    st.session_state.batch = api(
+                        "POST", "/batch/summarize",
+                        json={"workspace_path": workspace, "paths": chosen, "provider": provider},
+                        timeout=300,
+                    )
+                except Exception as exc:
+                    st.session_state.batch = None
+                    st.error(str(exc))
+
+    batch = st.session_state.get("batch")
+    if batch:
+        st.caption(
+            f"{len(batch['results'])} file(s) in **{batch['total_seconds']}s** wall clock, "
+            f"{batch['sequential_seconds']}s of model time at concurrency {batch['concurrency']}."
+        )
+        for item in batch["results"]:
+            if "error" in item:
+                st.error(f"`{item['path']}` — {item['error']}")
+            else:
+                st.markdown(f"**`{item['path']}`** · {item['seconds']}s")
+                st.text(item["summary"])
+
+
 try:
     existing_messages = api("GET", f"/sessions/{st.session_state.session_id}/messages") if st.session_state.get("session_id") else []
 except Exception:
@@ -90,12 +131,11 @@ for message in existing_messages:
 
 prompt = st.chat_input("Ask about the selected source code…")
 if prompt:
-    if not api_key or not model or (kind in {"azure", "compatible"} and not base_url):
+    if not provider_ready:
         st.error("Please complete the provider configuration first.")
         st.stop()
     with st.chat_message("user"):
         st.markdown(prompt)
-    provider = {"kind": kind, "api_key": api_key, "model": model, "base_url": base_url, "api_version": api_version}
     payload = {"session_id": st.session_state.get("session_id"), "workspace_path": workspace, "message": prompt, "provider": provider}
     with st.chat_message("assistant"):
         output = st.empty()

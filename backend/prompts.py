@@ -190,6 +190,59 @@ def build_openai_messages(history: list[dict], user_message: str, few_shot: bool
     return messages
 
 
+BATCH_SUMMARY_SYSTEM_PROMPT = """You summarise one source file at a time for an engineer meeting this codebase for the first time.
+
+Before writing, work out three things: what this file is responsible for, what its moving parts are, and what would surprise a reader who only skimmed it. Then reply with exactly these three lines and nothing else:
+
+Purpose: one sentence on what the file is responsible for.
+Key parts: the main functions, classes, or endpoints, comma-separated.
+Watch out: one risk, side effect, or hidden assumption worth knowing; write "nothing notable" when there is none.
+
+Describe only what the given lines show. If the excerpt is truncated, say so in the `Watch out` line rather than guessing at the rest.
+"""
+
+# One compact example only: this prompt is sent once per file in a batch, so
+# every extra token here is multiplied by the batch size.
+BATCH_SUMMARY_EXAMPLE = [
+    {
+        "role": "user",
+        "content": (
+            "File: services/billing.py\n"
+            "```\n"
+            "40: GRACE = timedelta(days=3)\n"
+            "41: \n"
+            "42: def is_past_due(subscription):\n"
+            "43:     if subscription.status == 'cancelled':\n"
+            "44:         return False\n"
+            "45:     return subscription.due_at + GRACE < utcnow()\n"
+            "```"
+        ),
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Purpose: Decides whether a subscription has fallen behind on payment.\n"
+            "Key parts: GRACE constant, is_past_due\n"
+            "Watch out: The three-day grace period is applied inside the check, so callers "
+            "see a subscription as current for three days after its due date."
+        ),
+    },
+]
+
+
+def build_batch_summary_messages(path: str, content: str) -> list[dict[str, Any]]:
+    """Messages for one file in a batch summarisation run.
+
+    Index 0 is always the system message, which the Gemini path lifts out into
+    `systemInstruction`.
+    """
+    return [
+        {"role": "system", "content": BATCH_SUMMARY_SYSTEM_PROMPT},
+        *BATCH_SUMMARY_EXAMPLE,
+        {"role": "user", "content": f"File: {path}\n```\n{content}\n```"},
+    ]
+
+
 def build_google_contents(history: list[dict], user_message: str, few_shot: bool = True) -> list[dict[str, Any]]:
     """Same prompt material as `build_openai_messages`, in Gemini `contents` shape.
 
