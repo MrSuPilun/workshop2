@@ -67,6 +67,34 @@ def ui_icon(name: str, class_name: str = "sync-inline-icon") -> str:
         f'stroke-linejoin="round" aria-hidden="true" focusable="false">{ICON_PATHS[name]}</svg>'
     )
 
+
+def local_workspace_options(base_path: Path) -> list[str]:
+    options = [str(base_path)]
+    if base_path.is_dir():
+        for child in sorted(base_path.iterdir()):
+            if child.is_dir():
+                options.append(str(child))
+    return options
+
+
+def select_local_directory(initial_dir: Path | None = None) -> str | None:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        directory = filedialog.askdirectory(
+            initialdir=str(initial_dir or Path.cwd()),
+            title="Select workspace directory",
+        )
+        root.destroy()
+        return directory or None
+    except Exception:
+        return None
+
+
 st.set_page_config(
     page_title="SyncSpace",
     page_icon=":material/bolt:",
@@ -77,6 +105,39 @@ st.set_page_config(
 st.markdown(
     f"<style>{(Path(__file__).with_name('styles.css')).read_text()}</style>",
     unsafe_allow_html=True,
+)
+
+st.components.v1.html(
+    """
+    <div id="sync-overlay">
+        <div class="sync-overlay-card">
+            <div class="sync-overlay-spinner" aria-hidden="true"></div>
+            <div class="sync-overlay-text">Working…</div>
+        </div>
+    </div>
+    <script>
+    (function(){
+        const overlay = document.getElementById('sync-overlay');
+        if (!overlay) return;
+
+        let timeoutId = null;
+        const show = () => {
+            overlay.classList.add('visible');
+            if (timeoutId) window.clearTimeout(timeoutId);
+            timeoutId = window.setTimeout(() => {
+                overlay.classList.remove('visible');
+            }, 3500);
+        };
+
+        document.body.addEventListener('click', (event) => {
+            const button = event.target.closest('button');
+            if (!button || button.disabled) return;
+            show();
+        }, true);
+    })();
+    </script>
+    """,
+    height=1,
 )
 
 
@@ -100,7 +161,7 @@ def backend_is_ready(api_url: str) -> bool:
 def initialise_state() -> None:
     defaults = {
         "session_id": None,
-        "workspace": os.getcwd(),
+        "workspace": "",
         "provider_kind": DEFAULT_PROVIDER_LABEL,
         "api_key_azure": DEFAULT_AZURE_API_KEY,
         "api_key_openai": DEFAULT_OPENAI_API_KEY,
@@ -360,16 +421,32 @@ def render_workspace_page(backend_ready: bool, workspace_page: st.Page) -> None:
     with st.container(border=True):
         source_column, safe_column = st.columns([0.68, 0.32])
         with source_column:
-            workspace = st.text_input(
-                "Source directory",
-                key="workspace",
-                placeholder="/path/to/project",
-                help="SyncSpace only reads files inside this directory.",
-            )
-            st.markdown(
-                f'<div class="sync-source-path">~ / {html.escape(workspace)}</div>',
-                unsafe_allow_html=True,
-            )
+            current_dir = Path(st.session_state.workspace or os.getcwd()).expanduser()
+            row_left, row_right = st.columns([0.84, 0.16], gap="small")
+            with row_left:
+                workspace = st.text_input(
+                    "Source directory",
+                    value=st.session_state.workspace or "",
+                    key="workspace",
+                    placeholder="Please paste a link here !",
+                    label_visibility="visible",
+                )
+            with row_right:
+                st.markdown("<div style='height: 27px'></div>", unsafe_allow_html=True)
+                if st.button(
+                    "Browse",
+                    icon=":material/folder_open:",
+                    key="browse_workspace",
+                ):
+                    selected = select_local_directory(current_dir)
+                    if selected:
+                        st.session_state.workspace = selected
+                        workspace = selected
+            if workspace:
+                st.markdown(
+                    f'<div class="sync-source-path">~ / {html.escape(workspace)}</div>',
+                    unsafe_allow_html=True,
+                )
         with safe_column:
             st.markdown(
                 f"""
@@ -386,7 +463,7 @@ def render_workspace_page(backend_ready: bool, workspace_page: st.Page) -> None:
             )
 
         workspace_ready = Path(workspace).expanduser().is_dir()
-        action_column, status_column = st.columns([0.36, 0.64])
+        action_column, status_column = st.columns([0.18, 0.82])
         with action_column:
             index_clicked = st.button(
                 "Index Source",
@@ -402,7 +479,10 @@ def render_workspace_page(backend_ready: bool, workspace_page: st.Page) -> None:
             elif not workspace_ready:
                 st.error("Select an existing directory to continue.")
             else:
-                st.caption("Safe mode is active. Source files remain read-only.")
+                st.markdown(
+                    "<div style='margin-top: 2px; color: var(--sync-on-surface-muted); font-size: 0.95rem;'>Safe mode is active. Source files remain read-only.</div>",
+                    unsafe_allow_html=True,
+                )
 
     if index_clicked:
         try:
