@@ -6,7 +6,6 @@ import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 import streamlit as st
@@ -43,11 +42,34 @@ PROVIDER_KINDS = {
 DEFAULT_PROVIDER_LABEL = (
     "Other (OpenAI-compatible)" if DEFAULT_BASE_URL else "Azure OpenAI"
 )
-VALID_PAGES = {"chat", "workspace", "history", "settings", "profile"}
+ICON_PATHS = {
+    "activity": '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>',
+    "check-circle": '<path d="M22 11.1V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
+    "cpu": '<rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line>',
+    "file-text": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line>',
+    "files": '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-2"></path><rect x="3" y="2" width="13" height="16" rx="2"></rect>',
+    "folder": '<path d="M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>',
+    "history": '<polyline points="3 12 3 5 10 5"></polyline><path d="M3.05 5A9 9 0 1 1 5 18.5"></path><polyline points="12 7 12 12 15 14"></polyline>',
+    "info": '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>',
+    "palette": '<circle cx="13.5" cy="6.5" r=".5"></circle><circle cx="17.5" cy="10.5" r=".5"></circle><circle cx="8.5" cy="7.5" r=".5"></circle><circle cx="6.5" cy="12.5" r=".5"></circle><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.6-1.4-.4-.4-.6-.9-.6-1.4 0-1.1.9-2 2-2h2.4c2.7 0 4.8-2.2 4.8-4.8C22 5.8 17.5 2 12 2z"></path>',
+    "search": '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>',
+    "server": '<rect x="2" y="3" width="20" height="7" rx="2"></rect><rect x="2" y="14" width="20" height="7" rx="2"></rect><line x1="6" y1="6.5" x2="6.01" y2="6.5"></line><line x1="6" y1="17.5" x2="6.01" y2="17.5"></line>',
+    "shield-check": '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline>',
+    "wrench": '<path d="M14.7 6.3a4 4 0 0 0-5-5l2.1 2.1-2.8 2.8-2.1-2.1a4 4 0 0 0 5 5l7.5 7.5a2 2 0 0 0 2.8-2.8z"></path>',
+}
+
+
+def ui_icon(name: str, class_name: str = "sync-inline-icon") -> str:
+    """Return a decorative, consistently styled inline SVG icon."""
+    return (
+        f'<svg class="{class_name}" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+        f'stroke-linejoin="round" aria-hidden="true" focusable="false">{ICON_PATHS[name]}</svg>'
+    )
 
 st.set_page_config(
     page_title="SyncSpace",
-    page_icon="⚡",
+    page_icon=":material/bolt:",
     layout="wide",
     initial_sidebar_state="auto",
 )
@@ -77,7 +99,6 @@ def backend_is_ready(api_url: str) -> bool:
 
 def initialise_state() -> None:
     defaults = {
-        "page": "chat",
         "session_id": None,
         "workspace": os.getcwd(),
         "provider_kind": DEFAULT_PROVIDER_LABEL,
@@ -106,30 +127,6 @@ def initialise_state() -> None:
         st.session_state.provider_kind = "Other (OpenAI-compatible)"
     elif legacy_provider not in PROVIDER_OPTIONS:
         st.session_state.provider_kind = DEFAULT_PROVIDER_LABEL
-
-
-def apply_query_navigation() -> None:
-    query_page = st.query_params.get("page")
-    query_session = st.query_params.get("session")
-    signature = (query_page, query_session)
-    if signature == st.session_state.get("_query_signature"):
-        return
-
-    if query_page in VALID_PAGES:
-        st.session_state.page = query_page
-    if query_session:
-        st.session_state.session_id = query_session
-        st.session_state.page = "chat"
-    st.session_state._query_signature = signature
-
-
-def navigate(page: str, session_id: str | None = None) -> None:
-    st.query_params.clear()
-    st.session_state._query_signature = (None, None)
-    st.session_state.page = page
-    if page == "chat":
-        st.session_state.session_id = session_id
-    st.rerun()
 
 
 def current_provider_config() -> dict:
@@ -186,23 +183,32 @@ def short_title(value: str, limit: int = 42) -> str:
     return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 1]}…"
 
 
-def render_topbar(context: str) -> None:
+def render_topbar(
+    context: str, workspace_page: st.Page, *, show_index_action: bool = True
+) -> None:
+    topbar_class = (
+        "sync-topbar sync-topbar-has-action" if show_index_action else "sync-topbar"
+    )
     st.markdown(
         f"""
-        <header class="sync-topbar">
+        <header class="{topbar_class}" aria-label="Workspace toolbar">
+            <a class="sync-skip-link" href="#sync-main">Skip to main content</a>
             <div class="sync-topbar-context">
-                <span class="sync-terminal">&gt;_</span>
+                <span class="sync-terminal" aria-hidden="true">&gt;_</span>
                 <span>{html.escape(context)}</span>
             </div>
-            <div class="sync-topbar-actions">
-                <span title="Notifications">◌</span>
-                <span class="sync-help" title="Help">?</span>
-                <a class="sync-index-link" href="?page=workspace">Index Source</a>
-            </div>
         </header>
+        <div id="sync-main" class="sync-main-anchor" tabindex="-1"></div>
         """,
         unsafe_allow_html=True,
     )
+    if show_index_action and st.button(
+        "Index Source",
+        icon=":material/folder_open:",
+        key="topbar_index_source",
+        help="Open workspace source indexing",
+    ):
+        st.switch_page(workspace_page)
 
 
 def render_page_heading(title: str, caption: str) -> None:
@@ -217,8 +223,9 @@ def render_page_heading(title: str, caption: str) -> None:
     )
 
 
-def render_sidebar(backend_ready: bool) -> None:
-    page = st.session_state.page
+def render_sidebar(
+    backend_ready: bool, current_page: str, pages: dict[str, st.Page]
+) -> None:
     with st.sidebar:
         st.markdown(
             """
@@ -240,16 +247,18 @@ def render_sidebar(backend_ready: bool) -> None:
             type="primary",
             use_container_width=True,
         ):
-            navigate("chat", None)
+            st.session_state.session_id = None
+            st.switch_page(pages["chat"], query_params={})
 
         nav_items = [
+            ("chat", "Chat", ":material/chat:"),
             ("workspace", "Workspace", ":material/folder_open:"),
             ("history", "History", ":material/history:"),
             ("settings", "Settings", ":material/settings:"),
             ("profile", "Profile", ":material/person:"),
         ]
         for target, label, icon in nav_items:
-            is_active = page == target or (target == "workspace" and page == "chat")
+            is_active = current_page == target
             if st.button(
                 label,
                 icon=icon,
@@ -257,7 +266,7 @@ def render_sidebar(backend_ready: bool) -> None:
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
             ):
-                navigate(target)
+                st.switch_page(pages[target])
 
         dot_class = "" if backend_ready else " offline"
         status_text = "Sync Status: Active" if backend_ready else "Sync Status: Offline"
@@ -339,9 +348,10 @@ def model_settings_form() -> None:
             st.warning("Add the API key, model, and endpoint required by this provider.")
 
 
-def render_workspace_page(backend_ready: bool) -> None:
+def render_workspace_page(backend_ready: bool, workspace_page: st.Page) -> None:
     workspace = st.session_state.workspace
-    render_topbar("Workspace source")
+    shield_icon = ui_icon("shield-check")
+    render_topbar("Workspace source", workspace_page, show_index_action=False)
     render_page_heading(
         "Source Indexing",
         "Connect a local repository so SyncSpace can provide contextual AI assistance, code navigation, and intelligent search.",
@@ -362,14 +372,14 @@ def render_workspace_page(backend_ready: bool) -> None:
             )
         with safe_column:
             st.markdown(
-                """
-                <div class="sync-safe-mode">
-                    <span class="sync-safe-icon">◇</span>
+                f"""
+                <div class="sync-safe-mode" role="status" aria-label="Safe mode enabled. Tool calling is read-only.">
+                    <span class="sync-safe-icon">{shield_icon}</span>
                     <div>
                         <strong>Safe Mode</strong>
                         <span>Read-only tool calling</span>
                     </div>
-                    <span class="sync-toggle-on"></span>
+                    <span class="sync-status-badge">Enabled</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -413,9 +423,9 @@ def render_workspace_page(backend_ready: bool) -> None:
 
     with st.container(border=True):
         state_title = "Source Ready" if is_indexed else "Ready to Index"
-        state_icon = "↻" if is_indexed else "⌁"
+        state_icon = ui_icon("check-circle" if is_indexed else "activity")
         st.markdown(
-            f'<div class="sync-panel-title"><span class="violet">{state_icon}</span>{state_title}</div>',
+            f'<h2 class="sync-panel-title"><span class="violet">{state_icon}</span>{state_title}</h2>',
             unsafe_allow_html=True,
         )
         if is_indexed:
@@ -437,8 +447,9 @@ def render_workspace_page(backend_ready: bool) -> None:
     provider = current_provider_config()
     provider_ready = provider_is_ready(provider)
     with st.container(border=True):
+        batch_icon = ui_icon("files")
         st.markdown(
-            '<div class="sync-panel-title"><span class="violet">≡</span>Batch Summaries</div>',
+            f'<h2 class="sync-panel-title"><span class="violet">{batch_icon}</span>Batch Summaries</h2>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -491,8 +502,10 @@ def render_workspace_page(backend_ready: bool) -> None:
                     with st.expander(f"{item['path']} · {item['seconds']}s"):
                         st.text(item["summary"])
 
+    recent_icon = ui_icon("history")
+    folder_icon = ui_icon("folder", "sync-inline-icon sync-inline-icon-small")
     st.markdown(
-        '<div class="sync-panel-title" style="border:0;margin-top:24px;margin-bottom:12px;">↻ Recent Workspace</div>',
+        f'<h2 class="sync-panel-title sync-panel-title-standalone">{recent_icon}Recent Workspace</h2>',
         unsafe_allow_html=True,
     )
     groups = Counter(path.split("/", 1)[0] for path in indexed_files)
@@ -503,7 +516,7 @@ def render_workspace_page(backend_ready: bool) -> None:
                 st.markdown(
                     f"""
                     <div class="sync-workspace-card">
-                        <h4>▣ {html.escape(name)}</h4>
+                        <h3>{folder_icon}{html.escape(name)}</h3>
                         <div class="sync-card-path">{html.escape(workspace)}</div>
                         <div class="sync-card-meta">{count} indexed files</div>
                     </div>
@@ -514,7 +527,7 @@ def render_workspace_page(backend_ready: bool) -> None:
         st.markdown(
             f"""
             <div class="sync-workspace-card">
-                <h4>▣ {html.escape(Path(workspace).expanduser().name or 'No source selected')}</h4>
+                <h3>{folder_icon}{html.escape(Path(workspace).expanduser().name or 'No source selected')}</h3>
                 <div class="sync-card-path">{html.escape(workspace)}</div>
                 <div class="sync-card-meta">Waiting for source indexing</div>
             </div>
@@ -523,8 +536,10 @@ def render_workspace_page(backend_ready: bool) -> None:
         )
 
 
-def render_history_page(sessions: list[dict]) -> None:
-    render_topbar("SyncSpace")
+def render_history_page(
+    sessions: list[dict], workspace_page: st.Page, chat_page: st.Page
+) -> None:
+    render_topbar("SyncSpace", workspace_page)
     render_page_heading("Conversation History", "Manage and resume past sessions.")
     search = st.text_input(
         "Search conversations",
@@ -559,34 +574,45 @@ def render_history_page(sessions: list[dict]) -> None:
         items = groups.get(label, [])
         if not items:
             continue
-        st.markdown(f'<div class="sync-history-group">{label}</div>', unsafe_allow_html=True)
+        st.markdown(f'<h2 class="sync-history-group">{label}</h2>', unsafe_allow_html=True)
         for start in range(0, len(items), 2):
             columns = st.columns(2)
             for column, (session, created) in zip(columns, items[start : start + 2]):
                 with column:
                     title = short_title(session["title"])
-                    href = f"?page=chat&session={quote(session['id'])}"
-                    st.markdown(
-                        f"""
-                        <a class="sync-history-card" href="{href}">
-                            <h4>{html.escape(title)}</h4>
-                            <div class="sync-card-path">⌘ {html.escape(Path(st.session_state.workspace).name)}</div>
-                            <div class="sync-card-meta">{created.strftime('%b %d, %Y · %H:%M')}</div>
-                        </a>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                    folder_icon = ui_icon("folder", "sync-inline-icon sync-inline-icon-small")
+                    with st.container(border=True):
+                        st.page_link(
+                            chat_page,
+                            label=title,
+                            icon=":material/chat:",
+                            help=session["title"],
+                            width="stretch",
+                            query_params={"session": session["id"]},
+                        )
+                        st.markdown(
+                            f"""
+                            <div class="sync-history-card-meta">
+                                <div class="sync-card-path sync-card-path-with-icon">{folder_icon}{html.escape(Path(st.session_state.workspace).name)}</div>
+                                <div class="sync-card-meta">{created.strftime('%b %d, %Y · %H:%M')}</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
 
-def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
-    render_topbar("Preferences")
+def render_settings_page(
+    backend_ready: bool, mcp_servers: list[dict], workspace_page: st.Page
+) -> None:
+    render_topbar("Preferences", workspace_page)
     render_page_heading(
         "Settings", "Configure your workspace environment and model integrations."
     )
 
     with st.container(border=True):
+        model_icon = ui_icon("cpu")
         st.markdown(
-            '<div class="sync-panel-title"><span class="violet">▣</span>Model Provider</div>',
+            f'<h2 class="sync-panel-title"><span class="violet">{model_icon}</span>Model Provider</h2>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -598,8 +624,9 @@ def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
     tools_column, info_column = st.columns([0.52, 0.48])
     with tools_column:
         with st.container(border=True):
+            tool_config_icon = ui_icon("wrench")
             st.markdown(
-                '<div class="sync-panel-title"><span class="orange">⌘</span>Tool Configuration</div>',
+                f'<h2 class="sync-panel-title"><span class="orange">{tool_config_icon}</span>Tool Configuration</h2>',
                 unsafe_allow_html=True,
             )
             st.markdown(
@@ -607,11 +634,12 @@ def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
                 unsafe_allow_html=True,
             )
             tools = [
-                ("⌕", "File Search", "tool: search_code"),
-                ("▤", "Read File Content", "tool: read_file"),
-                ("☷", "List Directory", "tool: list_files"),
+                ("search", "File Search", "tool: search_code"),
+                ("file-text", "Read File Content", "tool: read_file"),
+                ("folder", "List Directory", "tool: list_files"),
             ]
-            for icon, name, tool_name in tools:
+            for icon_name, name, tool_name in tools:
+                icon = ui_icon(icon_name)
                 st.markdown(
                     f"""
                     <div class="sync-tool-row">
@@ -628,10 +656,11 @@ def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
             with st.expander(f"MCP Servers · {len(mcp_servers)} configured"):
                 if mcp_servers:
                     for server in mcp_servers:
+                        server_icon = ui_icon("server")
                         st.markdown(
                             f"""
                             <div class="sync-tool-row">
-                                <span class="sync-tool-icon">◇</span>
+                                <span class="sync-tool-icon">{server_icon}</span>
                                 <div class="sync-tool-copy">
                                     <strong>{html.escape(server['name'])}</strong>
                                     <span>{html.escape(server['command'])}</span>
@@ -678,26 +707,28 @@ def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
 
     with info_column:
         with st.container(border=True):
+            palette_icon = ui_icon("palette")
             st.markdown(
-                '<div class="sync-panel-title"><span class="orange">◉</span>Appearance</div>',
+                f'<h2 class="sync-panel-title"><span class="orange">{palette_icon}</span>Appearance</h2>',
                 unsafe_allow_html=True,
             )
             st.markdown(
                 """
                 <div class="sync-label">Theme</div>
-                <div class="sync-tool-row" style="margin-top:8px;justify-content:center;">
+                <div class="sync-tool-row sync-theme-row">
                     <span class="sync-tool-badge">DARK</span>
-                    <span class="sync-card-meta" style="margin:0;">Developer-centric · high contrast</span>
+                    <span class="sync-card-meta sync-theme-description">Developer-centric · high contrast</span>
                 </div>
-                <div class="sync-label" style="margin-top:18px;">Editor Font Size</div>
+                <div class="sync-label sync-label-spaced">Editor Font Size</div>
                 <div class="sync-source-path">14px · JetBrains Mono</div>
                 """,
                 unsafe_allow_html=True,
             )
 
         with st.container(border=True):
+            info_icon = ui_icon("info")
             st.markdown(
-                '<div class="sync-panel-title"><span>ⓘ</span>About</div>',
+                f'<h2 class="sync-panel-title"><span>{info_icon}</span>About</h2>',
                 unsafe_allow_html=True,
             )
             st.markdown(
@@ -712,14 +743,18 @@ def render_settings_page(backend_ready: bool, mcp_servers: list[dict]) -> None:
 
 
 def render_profile_page(
-    backend_ready: bool, workspace_ready: bool, provider_ready: bool
+    backend_ready: bool,
+    workspace_ready: bool,
+    provider_ready: bool,
+    workspace_page: st.Page,
 ) -> None:
-    render_topbar("Profile")
+    render_topbar("Profile", workspace_page)
     render_page_heading("User Profile", "Review the status of your local SyncSpace session.")
     with st.container(border=True):
+        user_icon = ui_icon("activity")
         st.markdown(
-            """
-            <div class="sync-panel-title"><span class="violet">HG</span>Local Workspace User</div>
+            f"""
+            <h2 class="sync-panel-title"><span class="violet">{user_icon}</span>Local Workspace User</h2>
             <p class="sync-section-copy">SyncSpace runs locally and does not require a hosted user account.</p>
             """,
             unsafe_allow_html=True,
@@ -736,7 +771,7 @@ def render_profile_page(
                 st.markdown(
                     f"""
                     <div class="sync-workspace-card">
-                        <h4>{html.escape(label)}</h4>
+                        <h3>{html.escape(label)}</h3>
                         <div class="sync-card-meta">{state}</div>
                     </div>
                     """,
@@ -749,10 +784,16 @@ def render_chat_page(
     workspace_ready: bool,
     configuration_ready: bool,
     existing_messages: list[dict],
+    workspace_page: st.Page,
 ) -> None:
     workspace = st.session_state.workspace
     workspace_name = Path(workspace).expanduser().name or workspace
-    render_topbar(workspace)
+    render_topbar(workspace, workspace_page)
+    if existing_messages:
+        st.markdown(
+            f'<h1 class="sync-visually-hidden">Chat for {html.escape(workspace_name)}</h1>',
+            unsafe_allow_html=True,
+        )
 
     indexed_files = st.session_state.get("indexed_files", [])
     context_label = f"Context loaded: {workspace_name}"
@@ -769,7 +810,7 @@ def render_chat_page(
             f"""
             <div class="sync-empty-state">
                 <div class="sync-empty-icon">AI</div>
-                <h2>Ready for {html.escape(workspace_name)}</h2>
+                <h1>Ready for {html.escape(workspace_name)}</h1>
                 <p>Ask about architecture, trace a bug, or explore this codebase. SyncSpace will inspect only the files needed to help.</p>
             </div>
             <div class="sync-suggestion-label">Start with a focused prompt</div>
@@ -858,7 +899,6 @@ def render_chat_page(
 
 
 initialise_state()
-apply_query_navigation()
 
 backend_ready = backend_is_ready(API_URL)
 try:
@@ -870,22 +910,17 @@ try:
 except Exception:
     mcp_servers = []
 
-render_sidebar(backend_ready)
-
 workspace = st.session_state.workspace
 workspace_ready = Path(workspace).expanduser().is_dir()
 configuration_ready = provider_is_ready(current_provider_config())
-page = st.session_state.page
 
-if page == "workspace":
-    render_workspace_page(backend_ready)
-elif page == "history":
-    render_history_page(sessions)
-elif page == "settings":
-    render_settings_page(backend_ready, mcp_servers)
-elif page == "profile":
-    render_profile_page(backend_ready, workspace_ready, configuration_ready)
-else:
+pages: dict[str, st.Page] = {}
+
+
+def chat_route() -> None:
+    query_session = st.query_params.get("session")
+    if query_session:
+        st.session_state.session_id = query_session
     try:
         existing_messages = (
             api("GET", f"/sessions/{st.session_state.session_id}/messages")
@@ -899,4 +934,67 @@ else:
         workspace_ready,
         configuration_ready,
         existing_messages,
+        pages["workspace"],
     )
+
+
+def workspace_route() -> None:
+    render_workspace_page(backend_ready, pages["workspace"])
+
+
+def history_route() -> None:
+    render_history_page(sessions, pages["workspace"], pages["chat"])
+
+
+def settings_route() -> None:
+    render_settings_page(backend_ready, mcp_servers, pages["workspace"])
+
+
+def profile_route() -> None:
+    render_profile_page(
+        backend_ready,
+        workspace_ready,
+        configuration_ready,
+        pages["workspace"],
+    )
+
+
+pages.update(
+    {
+        "chat": st.Page(
+            chat_route,
+            title="Chat",
+            icon=":material/chat:",
+            default=True,
+        ),
+        "workspace": st.Page(
+            workspace_route,
+            title="Workspace",
+            icon=":material/folder_open:",
+            url_path="workspace",
+        ),
+        "history": st.Page(
+            history_route,
+            title="History",
+            icon=":material/history:",
+            url_path="history",
+        ),
+        "settings": st.Page(
+            settings_route,
+            title="Settings",
+            icon=":material/settings:",
+            url_path="settings",
+        ),
+        "profile": st.Page(
+            profile_route,
+            title="Profile",
+            icon=":material/person:",
+            url_path="profile",
+        ),
+    }
+)
+
+selected_page = st.navigation(list(pages.values()), position="hidden")
+current_page = next(name for name, page in pages.items() if page == selected_page)
+render_sidebar(backend_ready, current_page, pages)
+selected_page.run()
