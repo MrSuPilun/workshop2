@@ -51,7 +51,25 @@ def create_session(title: str = "New conversation") -> dict:
 
 def list_sessions() -> list[dict]:
     with _connection() as db:
-        return [dict(row) for row in db.execute("SELECT * FROM sessions ORDER BY created_at DESC")]
+        rows = db.execute(
+            """
+            SELECT s.id, s.title, s.created_at,
+                   (SELECT m.content
+                    FROM messages AS m
+                    WHERE m.session_id = s.id AND m.role = 'user'
+                    ORDER BY m.created_at
+                    LIMIT 1) AS first_message
+            FROM sessions AS s
+            ORDER BY s.created_at DESC
+            """
+        )
+        sessions = [dict(row) for row in rows]
+
+    for session in sessions:
+        first_message = session.pop("first_message")
+        if session["title"] == "New conversation" and first_message:
+            session["title"] = " ".join(first_message.split())[:60]
+    return sessions
 
 
 def get_messages(session_id: str) -> list[dict]:

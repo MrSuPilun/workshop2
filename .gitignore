@@ -5,3 +5,4 @@ backend/data/
 .streamlit/secrets.toml
 .env
 docs/
+.agents/

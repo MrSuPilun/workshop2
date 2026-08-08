@@ -72,7 +72,8 @@ def workspace_read(path: str, file: str, start_line: int = 1, end_line: int = 25
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
-    session = storage.create_session() if not payload.session_id else {"id": payload.session_id}
+    title = " ".join(payload.message.split())[:60] or "New conversation"
+    session = storage.create_session(title) if not payload.session_id else {"id": payload.session_id}
     history = storage.get_messages(session["id"])
     storage.add_message(session["id"], "user", payload.message)
 
