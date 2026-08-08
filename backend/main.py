@@ -9,10 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from . import storage
-from .agent import run_agent
+from .agent import explain_provider_error, run_agent, verify_provider
 from .batch import MAX_CONCURRENCY, summarize_files
 from .mcp_service import discover_tools
-from .models import BatchRequest, ChatRequest, McpServerInput, NewSession
+from .models import BatchRequest, ChatRequest, McpServerInput, NewSession, ProviderConfig
 from .workspace import list_files, read_file, search_code
 
 
@@ -85,7 +85,8 @@ async def chat(payload: ChatRequest):
                     final_answer = event["content"]
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(exc)})}\n\n"
+            detail = explain_provider_error(payload.provider, exc)
+            yield f"data: {json.dumps({'type': 'error', 'content': detail})}\n\n"
         if final_answer:
             storage.add_message(session["id"], "assistant", final_answer)
         yield f"data: {json.dumps({'type': 'session', 'session_id': session['id']})}\n\n"
@@ -109,6 +110,12 @@ async def batch_summarize(payload: BatchRequest) -> dict:
         "concurrency": MAX_CONCURRENCY,
         "results": results,
     }
+
+
+@app.post("/provider/verify")
+async def provider_verify(payload: ProviderConfig) -> dict:
+    """Check a provider configuration against the provider itself, not just for empty fields."""
+    return await verify_provider(payload)
 
 
 @app.get("/mcp/servers")

@@ -45,6 +45,28 @@ DEFAULT_PROVIDER_LABEL = (
 )
 VALID_PAGES = {"chat", "workspace", "history", "settings", "profile"}
 
+# Streamlit drops a widget's session_state entry on any run where that widget is
+# not rendered. Each of these is built on a single page but has to outlive
+# navigation, so they are re-asserted as plain state before any widget is built.
+PERSISTED_WIDGET_KEYS = (
+    "workspace",
+    "provider_kind",
+    "api_key_azure",
+    "api_key_openai",
+    "api_key_google",
+    "api_key_compatible",
+    "azure_base_url",
+    "azure_model",
+    "azure_api_version",
+    "google_base_url",
+    "google_model",
+    "compatible_base_url",
+    "compatible_model",
+    "openai_model",
+    "batch_paths",
+    "history_search",
+)
+
 st.set_page_config(
     page_title="SyncSpace",
     page_icon="⚡",
@@ -106,6 +128,18 @@ def initialise_state() -> None:
         st.session_state.provider_kind = "Other (OpenAI-compatible)"
     elif legacy_provider not in PROVIDER_OPTIONS:
         st.session_state.provider_kind = DEFAULT_PROVIDER_LABEL
+
+
+def keep_widget_state() -> None:
+    """Re-assert widget values as plain state so navigation cannot discard them.
+
+    Writing a key back to itself moves it out of Streamlit's widget bookkeeping
+    and into ordinary session state, which is never cleaned up for being absent
+    from a run. Must run before any widget is instantiated.
+    """
+    for key in PERSISTED_WIDGET_KEYS:
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
 
 
 def apply_query_navigation() -> None:
@@ -333,10 +367,19 @@ def model_settings_form() -> None:
             use_container_width=True,
         )
     if verify:
-        if provider_is_ready(current_provider_config()):
-            st.success("Configuration is complete and ready for chat.")
-        else:
+        provider = current_provider_config()
+        if not provider_is_ready(provider):
             st.warning("Add the API key, model, and endpoint required by this provider.")
+        else:
+            with st.spinner("Sending a test request to the provider…"):
+                try:
+                    result = api("POST", "/provider/verify", json=provider, timeout=60)
+                except Exception as exc:
+                    result = {"ok": False, "detail": f"Could not reach the SyncSpace API: {exc}"}
+            if result["ok"]:
+                st.success(result["detail"])
+            else:
+                st.error(result["detail"])
 
 
 def render_workspace_page(backend_ready: bool) -> None:
@@ -858,6 +901,7 @@ def render_chat_page(
 
 
 initialise_state()
+keep_widget_state()
 apply_query_navigation()
 
 backend_ready = backend_is_ready(API_URL)

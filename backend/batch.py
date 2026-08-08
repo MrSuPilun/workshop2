@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .agent import create_client
+from .agent import create_client, explain_provider_error
 from .models import ProviderConfig
 from .prompts import build_batch_summary_messages
 from .workspace import read_file
@@ -74,7 +74,8 @@ async def summarize_files(config: ProviderConfig, workspace_path: str, paths: li
                 return {"path": path, "summary": summary, "seconds": round(perf_counter() - started, 2)}
             except Exception as exc:
                 # Keep the batch alive; the caller reports which files failed.
-                return {"path": path, "error": str(exc), "seconds": round(perf_counter() - started, 2)}
+                detail = explain_provider_error(config, exc)
+                return {"path": path, "error": detail, "seconds": round(perf_counter() - started, 2)}
 
     try:
         return list(await asyncio.gather(*(summarize_one(path) for path in paths)))
