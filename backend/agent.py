@@ -11,13 +11,9 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from .models import ProviderConfig
 from .mcp_service import call_tool as call_mcp_tool, discover_tools
+from .prompts import SYSTEM_PROMPT, build_google_contents, build_openai_messages
 from .workspace import list_files, read_file, search_code
 
-
-SYSTEM_PROMPT = """You are SyncSpace, a precise AI coding-workspace companion.
-Use tools to inspect the selected workspace before making claims about its source code.
-Never claim that you ran commands, changed a file, or accessed a file that the tool output did not show.
-Give concise, actionable answers and cite relevant relative paths and line numbers."""
 
 TOOLS = [
     {"type": "function", "function": {"name": "list_files", "description": "List files in the selected workspace.", "parameters": {"type": "object", "properties": {}}}},
@@ -26,7 +22,8 @@ TOOLS = [
 ]
 
 
-def _client(config: ProviderConfig):
+def create_client(config: ProviderConfig):
+    """Build an async OpenAI-family client. Not used by the Gemini path, which is REST."""
     if config.kind == "azure":
         if not config.base_url:
             raise ValueError("Azure OpenAI needs an endpoint")
@@ -68,15 +65,6 @@ async def _run_tool(name: str, args: dict[str, Any], workspace_path: str, mcp_lo
     raise ValueError(f"Tool is not allowed: {name}")
 
 
-def _google_contents(history: list[dict], user_message: str) -> list[dict]:
-    contents = []
-    for item in history[-16:]:
-        role = "model" if item["role"] == "assistant" else "user"
-        contents.append({"role": role, "parts": [{"text": item["content"]}]})
-    contents.append({"role": "user", "parts": [{"text": user_message}]})
-    return contents
-
-
 def _google_tools(openai_tools: list[dict]) -> list[dict]:
     return [{"functionDeclarations": [
         {
@@ -99,7 +87,7 @@ async def _run_google_agent(
     """Gemini REST tool-call loop using the Google Generative Language API."""
     endpoint = (config.base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
     url = f"{endpoint}/models/{config.model}:generateContent"
-    contents = _google_contents(history, user_message)
+    contents = build_google_contents(history, user_message)
     payload_base = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "tools": _google_tools(all_tools),
@@ -144,10 +132,8 @@ async def run_agent(config: ProviderConfig, workspace_path: str, history: list[d
             yield event
         return
 
-    client = _client(config)
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend({"role": item["role"], "content": item["content"]} for item in history[-16:])
-    messages.append({"role": "user", "content": user_message})
+    client = create_client(config)
+    messages: list[dict[str, Any]] = build_openai_messages(history, user_message)
 
     for _ in range(6):
         completion = await client.chat.completions.create(model=config.model, messages=messages, tools=all_tools, tool_choice="auto")

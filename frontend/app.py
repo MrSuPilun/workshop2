@@ -96,6 +96,7 @@ def initialise_state() -> None:
         "indexed_workspace": None,
         "indexed_files": [],
         "history_search": "",
+        "batch": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -398,6 +399,10 @@ def render_workspace_page(backend_ready: bool) -> None:
             files = api("GET", "/workspace/files", params={"path": workspace})
             st.session_state.indexed_workspace = str(Path(workspace).expanduser().resolve())
             st.session_state.indexed_files = files
+            # Selections and summaries belong to the previous index; drop them
+            # before the multiselect below is built from the new file list.
+            st.session_state.pop("batch_paths", None)
+            st.session_state.batch = None
         except Exception as exc:
             st.error(f"Could not inspect the workspace: {exc}")
 
@@ -428,6 +433,63 @@ def render_workspace_page(backend_ready: bool) -> None:
                 '<p class="sync-section-copy">Choose a valid source directory and run indexing to preview the files available to the assistant.</p>',
                 unsafe_allow_html=True,
             )
+
+    provider = current_provider_config()
+    provider_ready = provider_is_ready(provider)
+    with st.container(border=True):
+        st.markdown(
+            '<div class="sync-panel-title"><span class="violet">≡</span>Batch Summaries</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="sync-section-copy">Every selected file gets its own summarization call. '
+            'The calls are issued concurrently, so a batch costs about as much as its slowest '
+            'file rather than the sum of them all.</p>',
+            unsafe_allow_html=True,
+        )
+        chosen = st.multiselect(
+            "Files to summarize",
+            indexed_files,
+            max_selections=20,
+            key="batch_paths",
+            disabled=not is_indexed,
+            placeholder="Choose up to 20 files" if is_indexed else "Index the source first",
+        )
+        if st.button(
+            "Summarize selected",
+            icon=":material/bolt:",
+            key="run_batch",
+            type="primary",
+            disabled=not (chosen and backend_ready and provider_ready),
+            use_container_width=True,
+        ):
+            with st.spinner(f"Summarizing {len(chosen)} file(s)…"):
+                try:
+                    st.session_state.batch = api(
+                        "POST",
+                        "/batch/summarize",
+                        timeout=300,
+                        json={"workspace_path": workspace, "paths": chosen, "provider": provider},
+                    )
+                except Exception as exc:
+                    st.session_state.batch = None
+                    st.error(f"Batch failed: {exc}")
+        if is_indexed and not provider_ready:
+            st.caption("Add a model and an API key on the Settings page to enable batch summaries.")
+
+        batch = st.session_state.get("batch")
+        if batch:
+            saved = batch["sequential_seconds"] - batch["total_seconds"]
+            wall, model_time, gain = st.columns(3)
+            wall.metric("Wall clock", f"{batch['total_seconds']}s")
+            model_time.metric("Model time", f"{batch['sequential_seconds']}s")
+            gain.metric("Saved", f"{saved:.2f}s", f"concurrency {batch['concurrency']}", delta_color="off")
+            for item in batch["results"]:
+                if "error" in item:
+                    st.error(f"{item['path']} — {item['error']}")
+                else:
+                    with st.expander(f"{item['path']} · {item['seconds']}s"):
+                        st.text(item["summary"])
 
     st.markdown(
         '<div class="sync-panel-title" style="border:0;margin-top:24px;margin-bottom:12px;">↻ Recent Workspace</div>',

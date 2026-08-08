@@ -39,6 +39,16 @@ To prefill the OpenAI-compatible provider, copy `.env.example` to `.env` and
 set `AZURE_OPENAI_API_KEY`, `OPENAI_BASE_URL`, and optionally
 `SYNCSPACE_DEFAULT_MODEL`. `.env` is ignored by Git.
 
+## Batch summarize
+
+The **Batch summarize files** panel takes up to 20 files from the workspace and
+sends one summarization prompt per file. The calls are issued concurrently
+(`asyncio.gather` behind a semaphore of 4) rather than one after another, so a
+batch costs roughly the slowest call instead of the sum of all of them. The
+response reports both wall-clock and total model time so the difference is
+visible, and a file that cannot be read is reported on its own row without
+failing the rest of the batch.
+
 ## MCP
 
 The **MCP Servers** expander accepts a local stdio command plus arguments. The
